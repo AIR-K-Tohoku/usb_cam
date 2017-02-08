@@ -88,7 +88,7 @@ public:
   {
     // advertise the main image topic
     image_pub_ = node_.advertise<sensor_msgs::CompressedImage>("image_raw/compressed", 1);
-    camera_info_pub_ = node_.advertise<sensor_msgs::CameraInfo>("image_raw/camera_info", 1);
+    camera_info_pub_ = node_.advertise<sensor_msgs::CameraInfo>("camera_info", 1);
 
     // grab the parameters
     node_.param("video_device", video_device_name_, std::string("/dev/video0"));
