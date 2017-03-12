@@ -85,27 +85,135 @@ UsbCam::~UsbCam()
   shutdown();
 }
 
+bool jpeg_sanity_check(const unsigned char * src, const int len)
+{
+  bool marker = false;
+  int segment = -1;
+  bool data = false;
+  unsigned short segment_size = 0;
+  int rst_prev = -1;
+  int i;
+  int rst_interval = 0;
+  int rst_a_prev = 0;
+  
+  //std::cerr << std::endl:;
+  //std::cerr << "jpeg: begin" << std::endl;
+  for(i = 0; i < len; i ++)
+  {
+    if(marker)
+    {
+      marker = false;
+      if(data)
+      {
+        int rst, rst_diff, rst_a, rst_a_diff;
+        switch(src[i])
+        {
+        case 0x00:
+          break;
+        case 0xD9: // EOI
+          //std::cerr << "jpeg: EOI" << std::endl << std::endl;
+          return true;
+          break;
+        case 0xD0: // RST*
+        case 0xD1:
+        case 0xD2:
+        case 0xD3:
+        case 0xD4:
+        case 0xD5:
+        case 0xD6:
+        case 0xD7:
+          rst = src[i] - 0xD0;
+          rst_a = i;
+          rst_diff = rst - rst_prev;
+          rst_a_diff = rst_a - rst_a_prev;
+          if(rst_diff < 0) rst_diff += 8;
+          if(rst_diff != 1)
+          {
+            std::cerr << "jpeg: RST* mis-ordered " << rst_prev << " -> " << rst << std::endl;
+            return false;
+          }
+          //std::cerr << "jpeg: rst intervel " << rst_a_diff << " (" << rst_interval << std::endl;
+          rst_prev = rst;
+          rst_a_prev = rst_a;
+          break;
+        default:
+          std::cerr << "jpeg: scan mis-placed" << std::endl;
+          return false;
+          break;
+        }
+        continue;
+      }
+      //std::cerr << "jpeg: marker: " << std::hex << (int)src[i] << std::endl;
+      switch(src[i])
+      {
+      case 0xFF:
+        marker = true;
+        break;
+      case 0x00:
+        std::cerr << "jpeg: data mis-placed" << std::endl;
+        return false;
+        break;
+      case 0xD8: // SOI
+        segment = -1;
+        break;
+      case 0xDA: // SOS
+        data = true;
+        break;
+      case 0xD0: // RST*
+      case 0xD1:
+      case 0xD2:
+      case 0xD3:
+      case 0xD4:
+      case 0xD5:
+      case 0xD6:
+      case 0xD7:
+        std::cerr << "jpeg: RST mis-placed" << std::endl;
+        return false;
+        break;
+      case 0xD9: // EOI
+        std::cerr << "jpeg: EOI mis-placed" << std::endl;
+        return false;
+        break;
+      case 0xDD: // DRI
+        if(i + 4 < len)
+        {
+          rst_interval = (src[i + 3] << 8) | src[i + 4];
+        }
+        break;
+      default:
+        segment = 1;
+        segment_size = 0;
+        break;
+      }
+    }
+    else if(segment >= 0)
+    {
+      segment_size = (segment_size << 8) | src[i];
+      segment --;
+      if(segment < 0)
+      {
+        i += segment_size - 2;
+        //std::cerr << "    size: " << (int)segment_size << std::endl;
+      }
+    }
+    else
+    {
+      if(src[i] == 0xFF) marker = true;
+      else marker = false;
+    }
+  }
+  std::cerr << "jpeg: EOI not found" << std::endl;
+  return false;
+}
+
 int UsbCam::process_image(const void * src, int len, camera_image_t *dest)
 {
   const unsigned char * src8 = (unsigned char *)src;
   bool valid(false);
 
-  if(src8[0] != 0xFF || src8[1] != 0xD8)
+  if(!jpeg_sanity_check(src8, len))
   {
-    ROS_ERROR("Invalid jpeg header.");
-    return 0;
-  }
-  for(int i = len - 2; i > len - 16; i --)
-  {
-    if(src8[i] == 0xFF && src8[i+1] == 0xD9)
-    {
-      valid = true;
-      break;
-    }
-  }
-  if(!valid)
-  {
-    ROS_ERROR("Invalid jpeg footer.");
+    ROS_ERROR("Invalid jpeg.");
     return 0;
   }
 
