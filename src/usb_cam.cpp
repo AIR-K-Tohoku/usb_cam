@@ -85,27 +85,66 @@ UsbCam::~UsbCam()
   shutdown();
 }
 
+bool jpeg_sanity_check(const unsigned char * src, const int len)
+{
+  bool marker = false;
+  int segment = -1;
+  unsigned short segment_size = 0;
+  int i;
+  for(i = 0; i < len; i ++)
+  {
+    if(marker)
+    {
+      switch(src[i])
+      {
+      case 0xD8: // SOI
+        segment = -1;
+        break;
+      case 0xD9: // EOI
+        return true;
+        break;
+      case 0xE0:
+      case 0xDB:
+      case 0xC0:
+      case 0xC4:
+      case 0xDA:
+        segment = 1;
+        segment_size = 0;
+        break;
+      default:
+        std::cerr << "jpeg: unknown segment marker " << src[i] << std::endl;
+        return false;
+      }
+      marker = false;
+    }
+    else if(segment >= 0)
+    {
+      segment_size = segment_size << 8;
+      segment_size |= src[i];
+      segment --;
+      if(segment == -1)
+      {
+        i += segment_size - 2;
+      }
+    }
+    else
+    {
+      if(src[i] == 0xFF) marker = true;
+      else marker = false;
+    }
+  }
+  std::cerr << "jpeg: EOI not found" << src[i] << std::endl;
+  return false;
+}
+
 int UsbCam::process_image(const void * src, int len, camera_image_t *dest)
 {
   const unsigned char * src8 = (unsigned char *)src;
   bool valid(false);
 
-  if(src8[0] != 0xFF || src8[1] != 0xD8)
+  if(!jpeg_sanity_check(src8, len))
   {
-    ROS_ERROR("Invalid jpeg header.");
-    return 0;
-  }
-  for(int i = len - 2; i > len - 16; i --)
-  {
-    if(src8[i] == 0xFF && src8[i+1] == 0xD9)
-    {
-      valid = true;
-      break;
-    }
-  }
-  if(!valid)
-  {
-    ROS_ERROR("Invalid jpeg footer.");
+    ROS_ERROR("Invalid jpeg.");
     return 0;
   }
 
